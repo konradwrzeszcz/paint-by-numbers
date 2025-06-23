@@ -328,6 +328,74 @@ function applyMedianFilter(imageData) {
 }
 
 /**
+ * Finds the most spacious point within a region to place a label.
+ * This works by iteratively "eroding" the outer layer of pixels until a central point or area is found.
+ * @param {object} region - The region object, containing an array of pixel indices.
+ * @param {number} width - The width of the canvas.
+ * @returns {{x: number, y: number}} The coordinates for the best label position.
+ */
+function findBestLabelPosition(region, width) {
+    if (!region || region.pixels.length === 0) return { x: -1, y: -1 };
+
+    let currentPixels = new Set(region.pixels);
+    let lastPixels = [];
+
+    while (currentPixels.size > 0) {
+        lastPixels = [...currentPixels]; // Save the pixels from this iteration as the potential last set
+        const pixelsToRemove = new Set();
+        
+        for (const pixelIndex of currentPixels) {
+            // Check 4-way neighbors
+            const neighbors = [
+                pixelIndex - 1, 
+                pixelIndex + 1,
+                pixelIndex - width, 
+                pixelIndex + width
+            ];
+
+            for (const neighborIndex of neighbors) {
+                if (!currentPixels.has(neighborIndex)) {
+                    // This pixel is on the boundary of the current set, mark it for removal
+                    pixelsToRemove.add(pixelIndex);
+                    break; 
+                }
+            }
+        }
+
+        // If all remaining pixels are on the boundary, we've found the center.
+        if (pixelsToRemove.size === currentPixels.size) {
+            break;
+        }
+        
+        // "Erode" by creating the next set of pixels without the boundary ones.
+        const nextPixels = new Set();
+        for(const pixelIndex of currentPixels) {
+            if (!pixelsToRemove.has(pixelIndex)) {
+                nextPixels.add(pixelIndex);
+            }
+        }
+        currentPixels = nextPixels;
+    }
+    
+    // `lastPixels` now holds the centermost pixel(s). Calculate their average position.
+    if (lastPixels.length === 0) { 
+        // Fallback for an unlikely edge case
+        const fallbackIndex = region.pixels[0];
+        return { x: fallbackIndex % width, y: Math.floor(fallbackIndex / width) };
+    }
+
+    let sumX = 0, sumY = 0;
+    for (const pixelIndex of lastPixels) {
+        sumX += pixelIndex % width;
+        sumY += Math.floor(pixelIndex / width);
+    }
+    return {
+        x: Math.round(sumX / lastPixels.length),
+        y: Math.round(sumY / lastPixels.length),
+    };
+}
+
+/**
  * Generates the Paint-by-Numbers view by segmenting the image based on color similarity.
  * This version uses a region-growing algorithm on the original image for more detailed results.
  * @param {ImageData} originalImageData - The original image data.
@@ -670,39 +738,7 @@ function generatePbnImage(originalImageData, colors) {
         const region = finalRegions[id];
         if (!region || region.pixels.length === 0) continue;
         
-        // Recalculate centroid for the final merged region
-        let sumX = 0, sumY = 0;
-        let minX = width, minY = height, maxX = -1, maxY = -1;
-        for (const pixelIndex of region.pixels) {
-            const x = pixelIndex % width;
-            const y = Math.floor(pixelIndex / width);
-            sumX += x;
-            sumY += y;
-            if (x < minX) minX = x;
-            if (x > maxX) maxX = x;
-            if (y < minY) minY = y;
-            if (y > maxY) maxY = y;
-        }
-        
-        let labelX = Math.round(sumX / region.pixels.length);
-        let labelY = Math.round(sumY / region.pixels.length);
-        
-        const centroidIndex = labelY * width + labelX;
-        if (finalRegionMap[centroidIndex] !== region.id) {
-            const centerX = (minX + maxX) / 2;
-            const centerY = (minY + maxY) / 2;
-            let minDistanceSq = Infinity;
-            for (const pixelIndex of region.pixels) {
-                const px = pixelIndex % width;
-                const py = Math.floor(pixelIndex / width);
-                const distSq = Math.pow(px - centerX, 2) + Math.pow(py - centerY, 2);
-                if (distSq < minDistanceSq) {
-                    minDistanceSq = distSq;
-                    labelX = px;
-                    labelY = py;
-                }
-            }
-        }
+        const { x: labelX, y: labelY } = findBestLabelPosition(region, width);
         
         const colorIndex = colors.findIndex(c => c[0] === region.color[0] && c[1] === region.color[1] && c[2] === region.color[2]);
 
