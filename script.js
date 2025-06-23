@@ -214,6 +214,18 @@ function kmeans(pixels, k) {
 // --- UI and View Generation ---
 
 /**
+ * Converts an RGB color to its hexadecimal representation.
+ * @param {number} r - Red value (0-255).
+ * @param {number} g - Green value (0-255).
+ * @param {number} b - Blue value (0-255).
+ * @returns {string} The hex color string (e.g., "#RRGGBB").
+ */
+function rgbToHex(r, g, b) {
+    const toHex = (c) => ('0' + Math.round(c).toString(16)).slice(-2);
+    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
+/**
  * Displays the color palette in the UI.
  * @param {Array<Array<number>>} colors - The array of colors to display.
  */
@@ -228,10 +240,17 @@ function displayPalette(colors) {
         swatch.style.backgroundColor = `rgb(${color[0]}, ${color[1]}, ${color[2]})`;
 
         const label = document.createElement('span');
-        label.textContent = `${i + 1}`;
+        const hexValue = rgbToHex(color[0], color[1], color[2]);
+        label.textContent = `${i + 1}`; // Just the number for alignment
+        
+        const hexLabel = document.createElement('span');
+        hexLabel.textContent = hexValue;
+        hexLabel.className = 'hex-label';
 
-        colorItem.appendChild(swatch);
+        // Change order: Number -> Swatch -> Hex
         colorItem.appendChild(label);
+        colorItem.appendChild(swatch);
+        colorItem.appendChild(hexLabel);
         colorPaletteContainer.appendChild(colorItem);
     });
 }
