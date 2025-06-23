@@ -52,25 +52,31 @@ pbnViewBtn.addEventListener('click', () => switchView('pbn'));
 function processImage() {
     if (!originalImage) return;
 
+    // Ensure we are working with the original image data, not a modified canvas
+    const tempCanvas = document.createElement('canvas');
+    const tempCtx = tempCanvas.getContext('2d');
+    tempCanvas.width = originalImage.width;
+    tempCanvas.height = originalImage.height;
+    tempCtx.drawImage(originalImage, 0, 0);
+    const imageData = tempCtx.getImageData(0, 0, originalImage.width, originalImage.height);
+
     const k = parseInt(colorCountInput.value, 10);
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     const allPixels = getPixels(imageData);
 
     // Optimization: Use a sample of pixels for k-means
-    const pixelSample = samplePixels(allPixels, 30000); 
+    const pixelSample = samplePixels(allPixels, 30000);
 
     dominantColors = kmeans(pixelSample, k);
     displayPalette(dominantColors);
 
-    quantizedImageData = generateQuantizedImage(imageData, dominantColors);
-    
-    // Apply a smoothing filter to the quantized image to reduce jagged edges.
-    const smoothedImageData = applyMedianFilter(quantizedImageData);
-
-    const results = generatePbnImage(smoothedImageData, dominantColors);
+    // New segmentation and PBN generation logic
+    const results = generatePbnImage(imageData, dominantColors);
     pbnImageData = results.pbn;
     coloredRegionsImageData = results.colored;
-    
+
+    // The 'quantized' view will now show the result of the new segmentation
+    quantizedImageData = results.colored;
+
     switchView(currentView);
 }
 
@@ -250,89 +256,16 @@ function findClosestColor(pixel, colors) {
 }
 
 /**
- * Creates a new image where each pixel is replaced by the closest color from the palette.
- * @param {ImageData} imageData - The original image data.
- * @param {Array<Array<number>>} colors - The generated color palette.
- * @returns {ImageData} The new image data for the quantized view.
- */
-function generateQuantizedImage(imageData, colors) {
-    const newImageData = new ImageData(imageData.width, imageData.height);
-    const data = imageData.data;
-    const newData = newImageData.data;
-
-    for (let i = 0; i < data.length; i += 4) {
-        const pixel = [data[i], data[i+1], data[i+2]];
-        const closestColor = findClosestColor(pixel, colors);
-        newData[i] = closestColor[0];
-        newData[i+1] = closestColor[1];
-        newData[i+2] = closestColor[2];
-        newData[i+3] = 255; // Alpha
-    }
-    return newImageData;
-}
-
-/**
- * Applies a 3x3 median filter to the image data to reduce noise and smooth regions.
- * @param {ImageData} imageData - The image data to smooth.
- * @returns {ImageData} The smoothed image data.
- */
-function applyMedianFilter(imageData) {
-    const width = imageData.width;
-    const height = imageData.height;
-    const data = imageData.data;
-    const newImageData = new ImageData(width, height);
-    const newData = newImageData.data;
-
-    for (let y = 0; y < height; y++) {
-        for (let x = 0; x < width; x++) {
-            const index = (y * width + x) * 4;
-
-            // Handle edges by copying the original pixel
-            if (x === 0 || x === width - 1 || y === 0 || y === height - 1) {
-                newData[index] = data[index];
-                newData[index + 1] = data[index + 1];
-                newData[index + 2] = data[index + 2];
-                newData[index + 3] = data[index + 3];
-                continue;
-            }
-
-            const rValues = [];
-            const gValues = [];
-            const bValues = [];
-
-            // Iterate over the 3x3 neighborhood
-            for (let j = -1; j <= 1; j++) {
-                for (let i = -1; i <= 1; i++) {
-                    const neighborIndex = ((y + j) * width + (x + i)) * 4;
-                    rValues.push(data[neighborIndex]);
-                    gValues.push(data[neighborIndex + 1]);
-                    bValues.push(data[neighborIndex + 2]);
-                }
-            }
-
-            // Sort the channel values and find the median (the 5th element in a 3x3 grid)
-            rValues.sort((a, b) => a - b);
-            gValues.sort((a, b) => a - b);
-            bValues.sort((a, b) => a - b);
-
-            newData[index] = rValues[4];
-            newData[index + 1] = gValues[4];
-            newData[index + 2] = bValues[4];
-            newData[index + 3] = 255; // Alpha
-        }
-    }
-    return newImageData;
-}
-
-/**
- * Generates the Paint-by-Numbers view, including outlines and color numbers.
- * @param {ImageData} quantizedImageData - The image data after color quantization.
+ * Generates the Paint-by-Numbers view by segmenting the image based on color similarity.
+ * This version uses a region-growing algorithm on the original image for more detailed results.
+ * @param {ImageData} originalImageData - The original image data.
  * @param {Array<Array<number>>} colors - The color palette.
  * @returns {{pbn: ImageData, colored: ImageData}} An object containing both the PBN and colored region images.
  */
-function generatePbnImage(quantizedImageData, colors) {
-    const width = quantizedImageData.width;
-    const height = quantizedImageData.height;
+function generatePbnImage(originalImageData, colors) {
+    const width = originalImageData.width;
+    const height = originalImageData.height;
+    const data = originalImageData.data;
 
     // Use an offscreen canvas for drawing to easily handle lines and text
     const pbnCanvas = document.createElement('canvas');
@@ -344,26 +277,23 @@ function generatePbnImage(quantizedImageData, colors) {
     pbnCtx.fillStyle = 'white';
     pbnCtx.fillRect(0, 0, width, height);
 
-    const data = quantizedImageData.data;
     // Map each pixel to a region ID. 0 means unvisited.
-    const regionMap = new Array(data.length / 4).fill(0);
+    const regionMap = new Array(width * height).fill(0);
     let regionId = 1;
-    const regions = {}; // Stores info about each region: { id, pixels, color, centroid }
+    const regions = {}; // Stores info about each region
+    const COLOR_THRESHOLD = 20; // Lowered for more detail
 
-    // 1. Find all contiguous color regions using a flood-fill based approach
+    // 1. Find regions using a region-growing algorithm (flood-fill with a threshold)
     for (let i = 0; i < regionMap.length; i++) {
         if (regionMap[i] === 0) { // If pixel hasn't been assigned to a region yet
-            const color = [data[i * 4], data[i * 4 + 1], data[i * 4 + 2]];
+            const startPixelColor = [data[i * 4], data[i * 4 + 1], data[i * 4 + 2]];
             const currentRegion = {
                 id: regionId,
                 pixels: [],
-                color: color,
-                sumX: 0,
-                sumY: 0,
-                minX: width,
-                minY: height,
-                maxX: -1,
-                maxY: -1
+                sumR: 0, sumG: 0, sumB: 0,
+                sumX: 0, sumY: 0,
+                minX: width, minY: height,
+                maxX: -1, maxY: -1
             };
             regions[regionId] = currentRegion;
 
@@ -372,10 +302,13 @@ function generatePbnImage(quantizedImageData, colors) {
 
             while (stack.length > 0) {
                 const pixelIndex = stack.pop();
-                currentRegion.pixels.push(pixelIndex);
-                
                 const x = pixelIndex % width;
                 const y = Math.floor(pixelIndex / width);
+
+                currentRegion.pixels.push(pixelIndex);
+                currentRegion.sumR += data[pixelIndex * 4];
+                currentRegion.sumG += data[pixelIndex * 4 + 1];
+                currentRegion.sumB += data[pixelIndex * 4 + 2];
                 currentRegion.sumX += x;
                 currentRegion.sumY += y;
                 if (x < currentRegion.minX) currentRegion.minX = x;
@@ -397,13 +330,13 @@ function generatePbnImage(quantizedImageData, colors) {
 
                     // Ensure neighbor is within canvas bounds and not already visited
                     if (neighborIndex >= 0 && neighborIndex < regionMap.length && regionMap[neighborIndex] === 0) {
-                        // Check for same-row continuity for W/E neighbors
                         const isSameRow = ( (neighborIndex === pixelIndex - 1 && y === ny) || (neighborIndex === pixelIndex + 1 && y === ny) );
                         const isVertical = (neighborIndex === pixelIndex - width || neighborIndex === pixelIndex + width);
 
                         if (isSameRow || isVertical) {
                             const neighborColor = [data[neighborIndex * 4], data[neighborIndex * 4 + 1], data[neighborIndex * 4 + 2]];
-                            if (color[0] === neighborColor[0] && color[1] === neighborColor[1] && color[2] === neighborColor[2]) {
+                            // Add to region if color is similar to the *starting* pixel of the region
+                            if (euclideanDistance(startPixelColor, neighborColor) < COLOR_THRESHOLD) {
                                 regionMap[neighborIndex] = regionId;
                                 stack.push(neighborIndex);
                             }
@@ -415,28 +348,40 @@ function generatePbnImage(quantizedImageData, colors) {
         }
     }
 
-    // NEW: Merge small regions into their largest neighbors
-    const MIN_REGION_SIZE = 100; // Regions smaller than this will be merged
+    // 2. Calculate initial average color for each region
+    for (const id in regions) {
+        const region = regions[id];
+        if (region.pixels.length > 0) {
+            region.avgColor = [
+                region.sumR / region.pixels.length,
+                region.sumG / region.pixels.length,
+                region.sumB / region.pixels.length
+            ];
+        } else {
+            region.avgColor = [0, 0, 0];
+        }
+    }
+    
+    // 3. Merge small regions into their most color-similar neighbors
+    const MIN_REGION_SIZE = 30; // Tunable: smaller value = more detail
     const sortedRegionIds = Object.keys(regions).sort((a, b) => regions[a].pixels.length - regions[b].pixels.length);
 
     for (const regionId of sortedRegionIds) {
         const region = regions[regionId];
 
-        // If region is gone or big enough, skip
         if (!region || region.pixels.length >= MIN_REGION_SIZE) {
             continue;
         }
 
-        // Find all unique neighbors
         const neighborIds = new Set();
         for (const pixelIndex of region.pixels) {
             const x = pixelIndex % width;
             const y = Math.floor(pixelIndex / width);
             const potentialNeighbors = [];
-            if (y > 0) potentialNeighbors.push(pixelIndex - width); // N
-            if (y < height - 1) potentialNeighbors.push(pixelIndex + width); // S
-            if (x > 0) potentialNeighbors.push(pixelIndex - 1); // W
-            if (x < width - 1) potentialNeighbors.push(pixelIndex + 1); // E
+            if (y > 0) potentialNeighbors.push(pixelIndex - width);
+            if (y < height - 1) potentialNeighbors.push(pixelIndex + width);
+            if (x > 0) potentialNeighbors.push(pixelIndex - 1);
+            if (x < width - 1) potentialNeighbors.push(pixelIndex + 1);
 
             for (const neighborIndex of potentialNeighbors) {
                 const neighborRegionId = regionMap[neighborIndex];
@@ -446,43 +391,62 @@ function generatePbnImage(quantizedImageData, colors) {
             }
         }
 
-        if (neighborIds.size === 0) continue; // Isolated, cannot merge
+        if (neighborIds.size === 0) continue;
 
-        // Find the largest neighbor among the candidates
-        let largestNeighborId = -1;
-        let maxNeighborSize = -1;
+        // Find the most color-similar neighbor
+        let bestNeighborId = -1;
+        let minColorDifference = Infinity;
         for (const neighborId of neighborIds) {
             const neighbor = regions[neighborId];
-            if (neighbor && neighbor.pixels.length > maxNeighborSize) {
-                maxNeighborSize = neighbor.pixels.length;
-                largestNeighborId = neighborId;
+            if (neighbor) {
+                const diff = euclideanDistance(region.avgColor, neighbor.avgColor);
+                if (diff < minColorDifference) {
+                    minColorDifference = diff;
+                    bestNeighborId = neighborId;
+                }
             }
         }
         
-        // Merge the small region into the largest one found
-        if (largestNeighborId !== -1) {
-            const targetRegion = regions[largestNeighborId];
+        if (bestNeighborId !== -1) {
+            const targetRegion = regions[bestNeighborId];
             
             // Re-assign all pixels in the regionMap
             for (const pixelIndex of region.pixels) {
-                regionMap[pixelIndex] = largestNeighborId;
+                regionMap[pixelIndex] = bestNeighborId;
             }
 
-            // Transfer pixel data to the target region
+            // Transfer data to the target region and update its averages
             targetRegion.pixels.push(...region.pixels);
+            targetRegion.sumR += region.sumR;
+            targetRegion.sumG += region.sumG;
+            targetRegion.sumB += region.sumB;
             targetRegion.sumX += region.sumX;
             targetRegion.sumY += region.sumY;
             targetRegion.minX = Math.min(targetRegion.minX, region.minX);
             targetRegion.minY = Math.min(targetRegion.minY, region.minY);
             targetRegion.maxX = Math.max(targetRegion.maxX, region.maxX);
             targetRegion.maxY = Math.max(targetRegion.maxY, region.maxY);
+            
+            // Recalculate average color for the merged region
+            targetRegion.avgColor = [
+                targetRegion.sumR / targetRegion.pixels.length,
+                targetRegion.sumG / targetRegion.pixels.length,
+                targetRegion.sumB / targetRegion.pixels.length,
+            ];
 
-            // Delete the old, small region
             delete regions[regionId];
         }
     }
 
-    // 2. Draw edges and calculate centroids
+    // 4. Assign a final palette color to each remaining region
+    for (const id in regions) {
+        const region = regions[id];
+        if (region.pixels.length > 0) {
+            region.color = findClosestColor(region.avgColor, colors);
+        }
+    }
+
+    // 5. Draw edges
     pbnCtx.strokeStyle = 'black';
     pbnCtx.lineWidth = 0.5;
     pbnCtx.beginPath();
@@ -491,14 +455,12 @@ function generatePbnImage(quantizedImageData, colors) {
             const index = y * width + x;
             const currentRegionId = regionMap[index];
 
-            // Check right neighbor
             if (x < width - 1) {
                 if (regionMap[index + 1] !== currentRegionId) {
                     pbnCtx.moveTo(x + 1, y);
                     pbnCtx.lineTo(x + 1, y + 1);
                 }
             }
-            // Check bottom neighbor
             if (y < height - 1) {
                 if (regionMap[index + width] !== currentRegionId) {
                     pbnCtx.moveTo(x, y + 1);
@@ -510,7 +472,7 @@ function generatePbnImage(quantizedImageData, colors) {
     pbnCtx.stroke();
 
 
-    // 3. Draw color numbers at the center of each region
+    // 6. Draw color numbers
     pbnCtx.fillStyle = 'black';
     pbnCtx.textAlign = 'center';
     pbnCtx.textBaseline = 'middle';
@@ -522,21 +484,15 @@ function generatePbnImage(quantizedImageData, colors) {
         let labelX = Math.round(region.sumX / region.pixels.length);
         let labelY = Math.round(region.sumY / region.pixels.length);
 
-        // Check if the calculated centroid is actually inside the region.
         const centroidIndex = labelY * width + labelX;
         if (regionMap[centroidIndex] !== region.id) {
-            // The centroid is outside. As a fallback, find the pixel within the region
-            // that is closest to the center of the region's bounding box. This is more
-            // robust for C-shaped or other non-convex regions.
             const centerX = (region.minX + region.maxX) / 2;
             const centerY = (region.minY + region.maxY) / 2;
-
             let minDistanceSq = Infinity;
             for (const pixelIndex of region.pixels) {
                 const px = pixelIndex % width;
                 const py = Math.floor(pixelIndex / width);
                 const distSq = Math.pow(px - centerX, 2) + Math.pow(py - centerY, 2);
-
                 if (distSq < minDistanceSq) {
                     minDistanceSq = distSq;
                     labelX = px;
@@ -545,24 +501,21 @@ function generatePbnImage(quantizedImageData, colors) {
             }
         }
         
-        // Find the color number (1-based index)
         const colorIndex = colors.findIndex(c => c[0] === region.color[0] && c[1] === region.color[1] && c[2] === region.color[2]);
 
-        // Only draw numbers for reasonably sized regions to avoid clutter
         if (colorIndex !== -1 && region.pixels.length > 20) {
-            // Use a fixed small font size for consistency
             const fontSize = 8;
             pbnCtx.font = `${fontSize}px Arial`;
             pbnCtx.fillText(colorIndex + 1, labelX, labelY);
         }
     }
 
-    // 4. Create the final colored regions preview image from the processed region map.
+    // 7. Create the final colored regions preview image
     const coloredImageData = new ImageData(width, height);
     const coloredData = coloredImageData.data;
     for (let i = 0; i < regionMap.length; i++) {
         const regionId = regionMap[i];
-        if (regionId > 0) {
+        if (regionId > 0 && regions[regionId]) {
             const color = regions[regionId].color;
             coloredData[i * 4] = color[0];
             coloredData[i * 4 + 1] = color[1];

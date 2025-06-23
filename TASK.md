@@ -33,6 +33,10 @@ This application allows users to upload an image and convert it into a "paint by
 - [ done ] Final Touches
   - [ done ] Add CSS styling
   - [ done ] Code cleanup and refactoring
+- [ done ] Improve Segmentation
+  - [ done ] Replace quantization-first approach with segmentation-first
+  - [ done ] Implement region-growing algorithm
+  - [ done ] Refine region merging logic
 
 ## Implementation plan
 
@@ -54,11 +58,11 @@ This application allows users to upload an image and convert it into a "paint by
     b. Based on the user's input for the number of colors, run the algorithm on the image's pixel data to find the dominant color centroids.
     c. Create a UI component to display the resulting color palette, showing a swatch of each color next to its assigned number (1, 2, 3, etc.).
 5.  **Image Segmentation & Rendering** - Generate the different image views.
-    a. Create the quantized view by replacing each pixel's color in the original image with the closest color from the generated palette.
-    b. Implement an algorithm (like connected-component labeling or flood fill) to identify contiguous regions of the same color in the quantized image.
-    c. Implement an edge detection algorithm to find the borders of these regions. A simple way is to check each pixel's neighbors; if a neighbor has a different color, it's an edge.
-    d. For each region, calculate a central point (e.g., the centroid).
-    e. Render the final "paint by numbers" view: a white background with black outlines for all regions and the corresponding color number drawn in the center of each region.
+    a. Implement a region-growing algorithm on the original image to segment it into areas of similar color. For each resulting segment, calculate its average color and assign the closest matching color from the generated palette.
+    b. Implement an edge detection algorithm to find the borders of these segments by checking for neighboring pixels that belong to a different region.
+    c. For each segment, calculate a central point (e.g., the centroid or a point close to the bounding box center). This is where the number will be placed.
+    d. Merge very small, noisy segments into their larger neighbors to clean up the final output and improve readability.
+    e. Render the final "paint by numbers" view: a white background with black outlines for all segments and the corresponding color number drawn in the center of each.
 6.  **UI Interactivity** - Make the UI functional.
     a. Connect the number of colors input so that changing its value triggers the image reprocessing.
     b. Implement the view toggle buttons to switch the canvas content between the original image, the quantized image, and the paint-by-numbers view.
