@@ -27,6 +27,15 @@ h1 {
     flex-direction: column;
 }
 
+.advanced-controls {
+    flex-wrap: wrap;
+    justify-content: center;
+}
+
+.slider-group {
+    min-width: 250px;
+}
+
 .main-content {
     margin-bottom: 20px;
 }

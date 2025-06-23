@@ -7,6 +7,15 @@ const colorPaletteContainer = document.getElementById('color-palette');
 const originalViewBtn = document.getElementById('original-view-btn');
 const quantizedViewBtn = document.getElementById('quantized-view-btn');
 const pbnViewBtn = document.getElementById('pbn-view-btn');
+const colorCountValue = document.getElementById('color-count-value');
+
+// Advanced controls
+const colorThresholdInput = document.getElementById('color-threshold');
+const colorThresholdValue = document.getElementById('color-threshold-value');
+const minRegionSizeInput = document.getElementById('min-region-size');
+const minRegionSizeValue = document.getElementById('min-region-size-value');
+const thinnessThresholdInput = document.getElementById('thinness-threshold');
+const thinnessThresholdValue = document.getElementById('thinness-threshold-value');
 
 // State variables
 let originalImage = null;
@@ -33,7 +42,8 @@ imageLoader.addEventListener('change', (e) => {
     reader.readAsDataURL(e.target.files[0]);
 });
 
-colorCountInput.addEventListener('change', () => {
+colorCountInput.addEventListener('input', (e) => {
+    colorCountValue.textContent = e.target.value;
     if (originalImage) {
         processImage();
     }
@@ -42,6 +52,20 @@ colorCountInput.addEventListener('change', () => {
 originalViewBtn.addEventListener('click', () => switchView('original'));
 quantizedViewBtn.addEventListener('click', () => switchView('quantized'));
 pbnViewBtn.addEventListener('click', () => switchView('pbn'));
+
+// Listen for changes on advanced control sliders
+colorThresholdInput.addEventListener('input', (e) => {
+    colorThresholdValue.textContent = e.target.value;
+    if (originalImage) processImage();
+});
+minRegionSizeInput.addEventListener('input', (e) => {
+    minRegionSizeValue.textContent = e.target.value;
+    if (originalImage) processImage();
+});
+thinnessThresholdInput.addEventListener('input', (e) => {
+    thinnessThresholdValue.textContent = e.target.value;
+    if (originalImage) processImage();
+});
 
 // --- Core Logic ---
 
@@ -72,8 +96,15 @@ function processImage() {
     
     displayPalette(dominantColors);
 
+    // Get latest values from the UI
+    const options = {
+        colorThreshold: parseInt(colorThresholdInput.value, 10),
+        minRegionSize: parseInt(minRegionSizeInput.value, 10),
+        thinnessThreshold: parseInt(thinnessThresholdInput.value, 10)
+    };
+
     // New segmentation and PBN generation logic
-    const results = generatePbnImage(imageData, dominantColors);
+    const results = generatePbnImage(imageData, dominantColors, options);
     pbnImageData = results.pbn;
     coloredRegionsImageData = results.colored;
 
@@ -478,9 +509,10 @@ function findBestLabelPosition(region, width) {
  * This version uses a region-growing algorithm on the original image for more detailed results.
  * @param {ImageData} originalImageData - The original image data.
  * @param {Array<Array<number>>} colors - The color palette.
+ * @param {object} options - An object with processing parameters.
  * @returns {{pbn: ImageData, colored: ImageData}} An object containing both the PBN and colored region images.
  */
-function generatePbnImage(originalImageData, colors) {
+function generatePbnImage(originalImageData, colors, options) {
     const width = originalImageData.width;
     const height = originalImageData.height;
     const data = originalImageData.data;
@@ -499,7 +531,7 @@ function generatePbnImage(originalImageData, colors) {
     const regionMap = new Array(width * height).fill(0);
     let regionId = 1;
     const regions = {}; // Stores info about each region
-    const COLOR_THRESHOLD = 5; // Lowered for more detail and accuracy
+    const COLOR_THRESHOLD = options.colorThreshold;
 
     // 1. Find regions using a region-growing algorithm (flood-fill with a threshold)
     for (let i = 0; i < regionMap.length; i++) {
@@ -581,8 +613,8 @@ function generatePbnImage(originalImageData, colors) {
     }
     
     // 3. Merge small or very thin regions into their most color-similar neighbors
-    const MIN_REGION_SIZE = 150;
-    const THINNESS_THRESHOLD = 8; // Aspect ratio threshold (e.g., 8:1) to consider a region "thin"
+    const MIN_REGION_SIZE = options.minRegionSize;
+    const THINNESS_THRESHOLD = options.thinnessThreshold; // Aspect ratio threshold (e.g., 8:1) to consider a region "thin"
     const sortedRegionIds = Object.keys(regions).sort((a, b) => regions[a].pixels.length - regions[b].pixels.length);
 
     for (const regionId of sortedRegionIds) {

@@ -10,13 +10,28 @@
     <h1>Paint by Numbers Generator</h1>
 
     <div class="controls">
-        <div class="control-group">
-            <label for="color-count">Number of Colors:</label>
-            <input type="number" id="color-count" value="8" min="2" max="256">
+        <div class="control-group slider-group">
+            <label for="color-count">Number of Colors (2-50): <span id="color-count-value">8</span></label>
+            <input type="range" id="color-count" value="8" min="2" max="50">
         </div>
         <div class="control-group">
             <label for="image-loader">Upload Image:</label>
             <input type="file" id="image-loader" accept="image/*">
+        </div>
+    </div>
+
+    <div class="controls advanced-controls">
+         <div class="control-group slider-group">
+            <label for="color-threshold">Detail Sensitivity (1-50): <span id="color-threshold-value">5</span></label>
+            <input type="range" id="color-threshold" value="5" min="1" max="50">
+        </div>
+        <div class="control-group slider-group">
+            <label for="min-region-size">Min Region Size (1-500): <span id="min-region-size-value">150</span></label>
+            <input type="range" id="min-region-size" value="150" min="1" max="500">
+        </div>
+        <div class="control-group slider-group">
+            <label for="thinness-threshold">Thinness Removal (2-20): <span id="thinness-threshold-value">8</span></label>
+            <input type="range" id="thinness-threshold" value="8" min="2" max="20">
         </div>
     </div>
 
