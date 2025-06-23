@@ -66,7 +66,10 @@ function processImage() {
     // Optimization: Use a sample of pixels for k-means
     const pixelSample = samplePixels(allPixels, 30000);
 
-    dominantColors = kmeans(pixelSample, k);
+    const initialK = Math.min(k * 5, 50); // Generate more colors initially
+    const kmeansResult = kmeans(pixelSample, initialK);
+    dominantColors = generateOptimalPalette(kmeansResult.centroids, kmeansResult.clusters, k);
+    
     displayPalette(dominantColors);
 
     // New segmentation and PBN generation logic
@@ -135,7 +138,7 @@ function euclideanDistance(p1, p2) {
  * Finds the dominant colors in an image using the k-means clustering algorithm.
  * @param {Array<Array<number>>} pixels - An array of pixels to analyze.
  * @param {number} k - The number of clusters (dominant colors) to find.
- * @returns {Array<Array<number>>} An array of the dominant colors.
+ * @returns {object} An object containing the `centroids` and the `clusters`.
  */
 function kmeans(pixels, k) {
     // 1. Initialize centroids randomly
@@ -153,10 +156,11 @@ function kmeans(pixels, k) {
     let iterations = 0;
     const maxIterations = 30; // Limit iterations to prevent infinite loops
     let lastCentroids;
+    let clusters; // Declare clusters here to access it after the loop
 
     while (iterations < maxIterations) {
         // 2. Create clusters
-        let clusters = Array.from({ length: k }, () => []);
+        clusters = Array.from({ length: k }, () => []);
 
         // 3. Assign each pixel to the closest centroid
         for (const pixel of pixels) {
@@ -208,7 +212,81 @@ function kmeans(pixels, k) {
         iterations++;
     }
 
-    return centroids;
+    return { centroids, clusters };
+}
+
+/**
+ * Selects a final palette of k colors that are visually distinct.
+ * It starts with a larger-than-needed set of centroids and picks the most distinct ones.
+ * @param {Array<Array<number>>} centroids - The initial list of dominant colors.
+ * @param {Array<Array<Array<number>>>} clusters - The pixel clusters corresponding to the centroids.
+ * @param {number} k - The desired final number of colors.
+ * @returns {Array<Array<number>>} The final optimized color palette.
+ */
+function generateOptimalPalette(centroids, clusters, k) {
+    if (centroids.length <= k) {
+        return centroids.sort((a, b) => {
+            const aLuminance = 0.2126 * a[0] + 0.7152 * a[1] + 0.0722 * a[2];
+            const bLuminance = 0.2126 * b[0] + 0.7152 * b[1] + 0.0722 * b[2];
+            return aLuminance - bLuminance;
+        });
+    }
+
+    // Combine centroids with their cluster size
+    const weightedCentroids = centroids.map((centroid, i) => ({
+        color: centroid,
+        size: clusters[i] ? clusters[i].length : 0
+    })).filter(c => c.size > 0); // Filter out empty clusters
+
+    // Sort by cluster size (dominance)
+    weightedCentroids.sort((a, b) => b.size - a.size);
+
+    const finalPalette = [];
+    const candidates = weightedCentroids.map(c => c.color);
+
+    // 1. Start with the most dominant color
+    if (candidates.length > 0) {
+        finalPalette.push(candidates.shift());
+    }
+
+    // 2. Greedily select the most distinct remaining colors
+    while (finalPalette.length < k && candidates.length > 0) {
+        let bestCandidate = null;
+        let maxMinDistance = -1;
+
+        for (const candidate of candidates) {
+            let minDistanceToPalette = Infinity;
+            for (const color of finalPalette) {
+                const distance = euclideanDistance(candidate, color);
+                if (distance < minDistanceToPalette) {
+                    minDistanceToPalette = distance;
+                }
+            }
+            if (minDistanceToPalette > maxMinDistance) {
+                maxMinDistance = minDistanceToPalette;
+                bestCandidate = candidate;
+            }
+        }
+        
+        if (bestCandidate) {
+            finalPalette.push(bestCandidate);
+            // Remove the selected candidate from the list
+            const indexToRemove = candidates.findIndex(c => c === bestCandidate);
+            if (indexToRemove > -1) {
+                candidates.splice(indexToRemove, 1);
+            }
+        } else {
+            // Should not happen if candidates are left, but as a safeguard
+            break;
+        }
+    }
+
+    // Sort the final palette by luminance for a pleasant visual order
+    return finalPalette.sort((a, b) => {
+        const aLuminance = 0.2126 * a[0] + 0.7152 * a[1] + 0.0722 * a[2];
+        const bLuminance = 0.2126 * b[0] + 0.7152 * b[1] + 0.0722 * b[2];
+        return aLuminance - bLuminance;
+    });
 }
 
 // --- UI and View Generation ---
