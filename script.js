@@ -499,7 +499,7 @@ function generatePbnImage(originalImageData, colors) {
     const regionMap = new Array(width * height).fill(0);
     let regionId = 1;
     const regions = {}; // Stores info about each region
-    const COLOR_THRESHOLD = 20; // Lowered for more detail
+    const COLOR_THRESHOLD = 12; // Lowered for more detail and accuracy
 
     // 1. Find regions using a region-growing algorithm (flood-fill with a threshold)
     for (let i = 0; i < regionMap.length; i++) {
@@ -821,7 +821,7 @@ function generatePbnImage(originalImageData, colors) {
         const colorIndex = colors.findIndex(c => c[0] === region.color[0] && c[1] === region.color[1] && c[2] === region.color[2]);
 
         if (colorIndex !== -1) {
-            const fontSize = 10;
+            const fontSize = 8;
             pbnCtx.font = `${fontSize}px Arial`;
             pbnCtx.fillText(colorIndex + 1, labelX, labelY);
         }
