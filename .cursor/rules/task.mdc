@@ -1,0 +1,84 @@
+---
+description:
+globs:
+alwaysApply: true
+---
+# Task List Management
+
+Guidlines for creating and managing task lists in markdown files to track project progress
+
+## Task List Creation
+
+1. Create task lists in a markdown file (in the project root):
+  - Use `TASK.md` file
+  - Include clear title and description of the task
+
+2. Structure of the file with these sections:
+  ```markdown
+  # {Feature name}
+
+  Brief description of the feature and its purpose.
+
+  ## Task status
+
+  - [ done ] Task 1
+    - [ done ] Task 1 subtask 1
+    - [ done ] Task 1 subtask 2
+  - [ done ] Task 2 description
+  - [ in progress ] Task 3
+    - [ done ] Task 3 subtask 1
+    - [ in progress ] Task 3 subtask 2
+    - [ to do ] Task 3 subtask 3
+  - [ to do ] Task 4
+  - [ to do ] Task 5
+    - [ to do ] Task 5 subtask 1
+    - [ to do ] Task 5 subtask 2
+  - [ to do ] Task 6
+
+  ## Implementation plan
+
+  Detailed description of how the feature will be implemented.
+
+  List of tasks in implementation order and detailed description.
+  1. Task 1 - detailed description of the task 1
+    a. Task 1 subtask 1 - detailed description of the subtask 1
+    b. Task 1 subtask 2 - detailed description of the subtask 2
+  2. Task 2 - detailed description of the task 2
+  3. Task 3 - detailed description of the task 3
+    a. Task 3 subtask 1 - detailed description of the subtask 1
+    b. Task 3 subtask 2 - detailed description of the subtask 2
+    c. Task 3 subtask 3 - detailed description of the subtask 3
+  4. Task 4 - detailed description of the task 4
+  5. Task 5 - detailed description of the task 5
+    a. Task 5 subtask 1 - detailed description of the subtask 1
+    b. Task 5 subtask 2 - detailed description of the subtask 2
+  6. Task 6 - detailed description of the task 6
+
+  ## All relevant files
+
+  List of files which gonna by added or updated.
+
+  Task 1 subtask 1:
+  +   {File1.extension} to add
+  -   {File2.extension} to remove
+  +/- {File3.extension} to update
+
+  Task 1 subtask 2:
+  +   {File1.extension} to add
+  -   {File2.extension} to remove
+  +/- {File3.extension} to update
+
+  Task 2:
+  +   {File1.extension} to add
+  -   {File2.extension} to remove
+  +/- {File3.extension} to update
+
+  Task 3 subtask 1:
+  +   {File1.extension} to add
+  -   {File2.extension} to remove
+  +/- {File3.extension} to update
+
+  (etc.)
+  ```
+
+3. Whenever a task is finished or the scope changed because of the fail from the build step update the `TASK.md` file
