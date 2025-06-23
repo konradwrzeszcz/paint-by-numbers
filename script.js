@@ -499,7 +499,7 @@ function generatePbnImage(originalImageData, colors) {
     const regionMap = new Array(width * height).fill(0);
     let regionId = 1;
     const regions = {}; // Stores info about each region
-    const COLOR_THRESHOLD = 12; // Lowered for more detail and accuracy
+    const COLOR_THRESHOLD = 5; // Lowered for more detail and accuracy
 
     // 1. Find regions using a region-growing algorithm (flood-fill with a threshold)
     for (let i = 0; i < regionMap.length; i++) {
