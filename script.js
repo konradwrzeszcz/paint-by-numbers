@@ -12,48 +12,24 @@ const pbnViewBtn = document.getElementById('pbn-view-btn');
 let originalImage = null;
 let dominantColors = [];
 let quantizedImageData = null;
-let pbnImageData = null; // To be implemented
+let coloredRegionsImageData = null;
+let pbnImageData = null;
 let currentView = 'original';
 
 // --- Event Listeners ---
 imageLoader.addEventListener('change', (e) => {
-    console.log("Image loader 'change' event fired.");
-    if (!e.target.files || e.target.files.length === 0) {
-        console.log("No file selected.");
-        return;
-    }
-    console.log("File selected:", e.target.files[0].name);
-
     const reader = new FileReader();
-
     reader.onload = (event) => {
-        console.log("FileReader 'onload' event fired.");
         const img = new Image();
-
         img.onload = () => {
-            console.log("Image 'onload' event fired. Image dimensions:", img.width, "x", img.height);
             originalImage = img;
             canvas.width = img.width;
             canvas.height = img.height;
             ctx.drawImage(img, 0, 0);
-            console.log("Original image drawn to canvas.");
             processImage();
         }
-
-        img.onerror = () => {
-            console.error("Error loading image. The image source might be invalid.");
-        }
-        
-        console.log("Setting image source...");
         img.src = event.target.result;
-        console.log("...image source set.");
     }
-
-    reader.onerror = () => {
-        console.error("Error reading the file with FileReader.");
-    }
-    
-    console.log("Reading file as Data URL...");
     reader.readAsDataURL(e.target.files[0]);
 });
 
@@ -74,11 +50,7 @@ pbnViewBtn.addEventListener('click', () => switchView('pbn'));
  * This is triggered on image upload and when the color count is changed.
  */
 function processImage() {
-    console.log("Processing started...");
-    if (!originalImage) {
-        console.warn("processImage called but no originalImage is set.");
-        return;
-    }
+    if (!originalImage) return;
 
     const k = parseInt(colorCountInput.value, 10);
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -87,21 +59,19 @@ function processImage() {
     // Optimization: Use a sample of pixels for k-means
     const pixelSample = samplePixels(allPixels, 30000); 
 
-    console.log("k-means started...");
     dominantColors = kmeans(pixelSample, k);
-    console.log("...k-means finished.");
     displayPalette(dominantColors);
 
-    console.log("Generating quantized image...");
     quantizedImageData = generateQuantizedImage(imageData, dominantColors);
-    console.log("...quantized image generated.");
     
-    console.log("Generating PBN image...");
-    pbnImageData = generatePbnImage(quantizedImageData, dominantColors);
-    console.log("...PBN image generated.");
+    // Apply a smoothing filter to the quantized image to reduce jagged edges.
+    const smoothedImageData = applyMedianFilter(quantizedImageData);
+
+    const results = generatePbnImage(smoothedImageData, dominantColors);
+    pbnImageData = results.pbn;
+    coloredRegionsImageData = results.colored;
     
     switchView(currentView);
-    console.log("Processing finished.");
 }
 
 /**
@@ -302,10 +272,63 @@ function generateQuantizedImage(imageData, colors) {
 }
 
 /**
+ * Applies a 3x3 median filter to the image data to reduce noise and smooth regions.
+ * @param {ImageData} imageData - The image data to smooth.
+ * @returns {ImageData} The smoothed image data.
+ */
+function applyMedianFilter(imageData) {
+    const width = imageData.width;
+    const height = imageData.height;
+    const data = imageData.data;
+    const newImageData = new ImageData(width, height);
+    const newData = newImageData.data;
+
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            const index = (y * width + x) * 4;
+
+            // Handle edges by copying the original pixel
+            if (x === 0 || x === width - 1 || y === 0 || y === height - 1) {
+                newData[index] = data[index];
+                newData[index + 1] = data[index + 1];
+                newData[index + 2] = data[index + 2];
+                newData[index + 3] = data[index + 3];
+                continue;
+            }
+
+            const rValues = [];
+            const gValues = [];
+            const bValues = [];
+
+            // Iterate over the 3x3 neighborhood
+            for (let j = -1; j <= 1; j++) {
+                for (let i = -1; i <= 1; i++) {
+                    const neighborIndex = ((y + j) * width + (x + i)) * 4;
+                    rValues.push(data[neighborIndex]);
+                    gValues.push(data[neighborIndex + 1]);
+                    bValues.push(data[neighborIndex + 2]);
+                }
+            }
+
+            // Sort the channel values and find the median (the 5th element in a 3x3 grid)
+            rValues.sort((a, b) => a - b);
+            gValues.sort((a, b) => a - b);
+            bValues.sort((a, b) => a - b);
+
+            newData[index] = rValues[4];
+            newData[index + 1] = gValues[4];
+            newData[index + 2] = bValues[4];
+            newData[index + 3] = 255; // Alpha
+        }
+    }
+    return newImageData;
+}
+
+/**
  * Generates the Paint-by-Numbers view, including outlines and color numbers.
  * @param {ImageData} quantizedImageData - The image data after color quantization.
  * @param {Array<Array<number>>} colors - The color palette.
- * @returns {ImageData} The new image data for the PBN view.
+ * @returns {{pbn: ImageData, colored: ImageData}} An object containing both the PBN and colored region images.
  */
 function generatePbnImage(quantizedImageData, colors) {
     const width = quantizedImageData.width;
@@ -328,7 +351,6 @@ function generatePbnImage(quantizedImageData, colors) {
     const regions = {}; // Stores info about each region: { id, pixels, color, centroid }
 
     // 1. Find all contiguous color regions using a flood-fill based approach
-    console.log("  Finding regions...");
     for (let i = 0; i < regionMap.length; i++) {
         if (regionMap[i] === 0) { // If pixel hasn't been assigned to a region yet
             const color = [data[i * 4], data[i * 4 + 1], data[i * 4 + 2]];
@@ -392,11 +414,9 @@ function generatePbnImage(quantizedImageData, colors) {
             regionId++;
         }
     }
-    console.log(`  ...regions found. Total: ${regionId - 1}`);
 
     // NEW: Merge small regions into their largest neighbors
-    console.log("  Merging small regions...");
-    const MIN_REGION_SIZE = 200; // Regions smaller than this will be merged
+    const MIN_REGION_SIZE = 100; // Regions smaller than this will be merged
     const sortedRegionIds = Object.keys(regions).sort((a, b) => regions[a].pixels.length - regions[b].pixels.length);
 
     for (const regionId of sortedRegionIds) {
@@ -461,10 +481,8 @@ function generatePbnImage(quantizedImageData, colors) {
             delete regions[regionId];
         }
     }
-    console.log("  ...small regions merged.");
 
     // 2. Draw edges and calculate centroids
-    console.log("  Drawing edges...");
     pbnCtx.strokeStyle = 'black';
     pbnCtx.lineWidth = 0.5;
     pbnCtx.beginPath();
@@ -490,11 +508,9 @@ function generatePbnImage(quantizedImageData, colors) {
         }
     }
     pbnCtx.stroke();
-    console.log("  ...edges drawn.");
 
 
     // 3. Draw color numbers at the center of each region
-    console.log("  Placing numbers...");
     pbnCtx.fillStyle = 'black';
     pbnCtx.textAlign = 'center';
     pbnCtx.textBaseline = 'middle';
@@ -509,12 +525,17 @@ function generatePbnImage(quantizedImageData, colors) {
         // Check if the calculated centroid is actually inside the region.
         const centroidIndex = labelY * width + labelX;
         if (regionMap[centroidIndex] !== region.id) {
-            // As a fallback, find the pixel within the region that is closest to the invalid centroid.
+            // The centroid is outside. As a fallback, find the pixel within the region
+            // that is closest to the center of the region's bounding box. This is more
+            // robust for C-shaped or other non-convex regions.
+            const centerX = (region.minX + region.maxX) / 2;
+            const centerY = (region.minY + region.maxY) / 2;
+
             let minDistanceSq = Infinity;
             for (const pixelIndex of region.pixels) {
                 const px = pixelIndex % width;
                 const py = Math.floor(pixelIndex / width);
-                const distSq = Math.pow(px - labelX, 2) + Math.pow(py - labelY, 2);
+                const distSq = Math.pow(px - centerX, 2) + Math.pow(py - centerY, 2);
 
                 if (distSq < minDistanceSq) {
                     minDistanceSq = distSq;
@@ -535,9 +556,25 @@ function generatePbnImage(quantizedImageData, colors) {
             pbnCtx.fillText(colorIndex + 1, labelX, labelY);
         }
     }
-    console.log("  ...numbers placed.");
 
-    return pbnCtx.getImageData(0, 0, width, height);
+    // 4. Create the final colored regions preview image from the processed region map.
+    const coloredImageData = new ImageData(width, height);
+    const coloredData = coloredImageData.data;
+    for (let i = 0; i < regionMap.length; i++) {
+        const regionId = regionMap[i];
+        if (regionId > 0) {
+            const color = regions[regionId].color;
+            coloredData[i * 4] = color[0];
+            coloredData[i * 4 + 1] = color[1];
+            coloredData[i * 4 + 2] = color[2];
+            coloredData[i * 4 + 3] = 255;
+        }
+    }
+
+    return {
+        pbn: pbnCtx.getImageData(0, 0, width, height),
+        colored: coloredImageData
+    };
 }
 
 /**
@@ -552,7 +589,7 @@ function switchView(view) {
         if (originalImage) ctx.drawImage(originalImage, 0, 0);
         originalViewBtn.classList.add('active');
     } else if (view === 'quantized') {
-        if (quantizedImageData) ctx.putImageData(quantizedImageData, 0, 0);
+        if (coloredRegionsImageData) ctx.putImageData(coloredRegionsImageData, 0, 0);
         quantizedViewBtn.classList.add('active');
     } else if (view === 'pbn') {
         if (pbnImageData) ctx.putImageData(pbnImageData, 0, 0);
