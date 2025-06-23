@@ -363,7 +363,7 @@ function generatePbnImage(originalImageData, colors) {
     }
     
     // 3. Merge small regions into their most color-similar neighbors
-    const MIN_REGION_SIZE = 30; // Tunable: smaller value = more detail
+    const MIN_REGION_SIZE = 100; // Increased to create larger, more paintable regions
     const sortedRegionIds = Object.keys(regions).sort((a, b) => regions[a].pixels.length - regions[b].pixels.length);
 
     for (const regionId of sortedRegionIds) {
@@ -446,23 +446,99 @@ function generatePbnImage(originalImageData, colors) {
         }
     }
 
-    // 5. Draw edges
+    // 5. Group contiguous regions with the same final color for numbering.
+    const finalRegions = {};
+    const finalRegionMap = new Array(width * height).fill(0);
+    let finalRegionId = 1;
+
+    for (let i = 0; i < finalRegionMap.length; i++) {
+        if (finalRegionMap[i] === 0) {
+            const originalRegion = regions[regionMap[i]];
+            if (!originalRegion || !originalRegion.color) continue;
+            const targetColor = originalRegion.color;
+
+            const currentFinalRegion = {
+                id: finalRegionId,
+                pixels: [],
+                color: targetColor,
+                sumX: 0, sumY: 0,
+                minX: width, minY: height,
+                maxX: -1, maxY: -1
+            };
+            finalRegions[finalRegionId] = currentFinalRegion;
+
+            const stack = [i];
+            finalRegionMap[i] = finalRegionId;
+
+            while (stack.length > 0) {
+                const pixelIndex = stack.pop();
+                const x = pixelIndex % width;
+                const y = Math.floor(pixelIndex / width);
+
+                currentFinalRegion.pixels.push(pixelIndex);
+                currentFinalRegion.sumX += x;
+                currentFinalRegion.sumY += y;
+                if (x < currentFinalRegion.minX) currentFinalRegion.minX = x;
+                if (x > currentFinalRegion.maxX) currentFinalRegion.maxX = x;
+                if (y < currentFinalRegion.minY) currentFinalRegion.minY = y;
+                if (y > currentFinalRegion.maxY) currentFinalRegion.maxY = y;
+
+                const neighbors = [
+                    pixelIndex - width, // N
+                    pixelIndex + width, // S
+                    pixelIndex - 1,     // W
+                    pixelIndex + 1      // E
+                ];
+
+                for (const neighborIndex of neighbors) {
+                    const nx = neighborIndex % width;
+                    const ny = Math.floor(neighborIndex / width);
+
+                    if (neighborIndex >= 0 && neighborIndex < finalRegionMap.length && finalRegionMap[neighborIndex] === 0) {
+                        const isSameRow = ( (neighborIndex === pixelIndex - 1 && y === ny) || (neighborIndex === pixelIndex + 1 && y === ny) );
+                        const isVertical = (neighborIndex === pixelIndex - width || neighborIndex === pixelIndex + width);
+
+                        if (isSameRow || isVertical) {
+                            const neighborOriginalRegion = regions[regionMap[neighborIndex]];
+                            if (neighborOriginalRegion && neighborOriginalRegion.color) {
+                                const neighborColor = neighborOriginalRegion.color;
+                                if (targetColor[0] === neighborColor[0] && targetColor[1] === neighborColor[1] && targetColor[2] === neighborColor[2]) {
+                                    finalRegionMap[neighborIndex] = finalRegionId;
+                                    stack.push(neighborIndex);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            finalRegionId++;
+        }
+    }
+
+    // 6. Draw edges based on the final assigned palette color to match the colored view.
     pbnCtx.strokeStyle = 'black';
     pbnCtx.lineWidth = 0.5;
     pbnCtx.beginPath();
     for (let y = 0; y < height; y++) {
         for (let x = 0; x < width; x++) {
             const index = y * width + x;
-            const currentRegionId = regionMap[index];
+            const currentRegion = regions[regionMap[index]];
+            const currentColor = currentRegion ? currentRegion.color : null;
 
+            // Check right neighbor
             if (x < width - 1) {
-                if (regionMap[index + 1] !== currentRegionId) {
+                const rightRegion = regions[regionMap[index + 1]];
+                const rightColor = rightRegion ? rightRegion.color : null;
+                if (currentColor !== rightColor) {
                     pbnCtx.moveTo(x + 1, y);
                     pbnCtx.lineTo(x + 1, y + 1);
                 }
             }
+            // Check bottom neighbor
             if (y < height - 1) {
-                if (regionMap[index + width] !== currentRegionId) {
+                const bottomRegion = regions[regionMap[index + width]];
+                const bottomColor = bottomRegion ? bottomRegion.color : null;
+                if (currentColor !== bottomColor) {
                     pbnCtx.moveTo(x, y + 1);
                     pbnCtx.lineTo(x + 1, y + 1);
                 }
@@ -472,20 +548,20 @@ function generatePbnImage(originalImageData, colors) {
     pbnCtx.stroke();
 
 
-    // 6. Draw color numbers
+    // 7. Draw color numbers
     pbnCtx.fillStyle = 'black';
     pbnCtx.textAlign = 'center';
     pbnCtx.textBaseline = 'middle';
     
-    for (const id in regions) {
-        const region = regions[id];
+    for (const id in finalRegions) {
+        const region = finalRegions[id];
         if (region.pixels.length === 0) continue;
         
         let labelX = Math.round(region.sumX / region.pixels.length);
         let labelY = Math.round(region.sumY / region.pixels.length);
 
         const centroidIndex = labelY * width + labelX;
-        if (regionMap[centroidIndex] !== region.id) {
+        if (finalRegionMap[centroidIndex] !== region.id) {
             const centerX = (region.minX + region.maxX) / 2;
             const centerY = (region.minY + region.maxY) / 2;
             let minDistanceSq = Infinity;
@@ -503,14 +579,14 @@ function generatePbnImage(originalImageData, colors) {
         
         const colorIndex = colors.findIndex(c => c[0] === region.color[0] && c[1] === region.color[1] && c[2] === region.color[2]);
 
-        if (colorIndex !== -1 && region.pixels.length > 20) {
-            const fontSize = 8;
+        if (colorIndex !== -1) {
+            const fontSize = 10; // Use a fixed, small font size for all numbers
             pbnCtx.font = `${fontSize}px Arial`;
             pbnCtx.fillText(colorIndex + 1, labelX, labelY);
         }
     }
 
-    // 7. Create the final colored regions preview image
+    // 8. Create the final colored regions preview image
     const coloredImageData = new ImageData(width, height);
     const coloredData = coloredImageData.data;
     for (let i = 0; i < regionMap.length; i++) {
