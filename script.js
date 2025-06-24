@@ -16,6 +16,7 @@ const minRegionSizeInput = document.getElementById('min-region-size');
 const minRegionSizeValue = document.getElementById('min-region-size-value');
 const thinnessThresholdInput = document.getElementById('thinness-threshold');
 const thinnessThresholdValue = document.getElementById('thinness-threshold-value');
+const loader = document.getElementById('loader');
 
 // State variables
 let originalImage = null;
@@ -24,6 +25,8 @@ let quantizedImageData = null;
 let coloredRegionsImageData = null;
 let pbnImageData = null;
 let currentView = 'original';
+let imageProcessor = new Worker('worker.js');
+let isProcessing = false;
 
 // --- Event Listeners ---
 imageLoader.addEventListener('change', (e) => {
@@ -35,7 +38,7 @@ imageLoader.addEventListener('change', (e) => {
             canvas.width = img.width;
             canvas.height = img.height;
             ctx.drawImage(img, 0, 0);
-            processImage();
+            if (originalImage) processImage();
         }
         img.src = event.target.result;
     }
@@ -67,6 +70,25 @@ thinnessThresholdInput.addEventListener('input', (e) => {
     if (originalImage) processImage();
 });
 
+// --- Worker Communication ---
+imageProcessor.onmessage = (event) => {
+    const { dominantColors: newDominantColors, pbnImageData: newPbn, coloredRegionsImageData: newColored } = event.data;
+
+    // Store results
+    dominantColors = newDominantColors;
+    pbnImageData = newPbn;
+    coloredRegionsImageData = newColored;
+    quantizedImageData = newColored; // The 'quantized' view uses the final colored regions
+
+    // Update UI
+    displayPalette(dominantColors);
+    switchView(currentView);
+    
+    // Hide loader
+    loader.style.display = 'none';
+    isProcessing = false;
+};
+
 // --- Core Logic ---
 
 /**
@@ -74,7 +96,10 @@ thinnessThresholdInput.addEventListener('input', (e) => {
  * This is triggered on image upload and when the color count is changed.
  */
 function processImage() {
-    if (!originalImage) return;
+    if (!originalImage || isProcessing) return;
+    
+    isProcessing = true;
+    loader.style.display = 'flex';
 
     // Ensure we are working with the original image data, not a modified canvas
     const tempCanvas = document.createElement('canvas');
@@ -85,17 +110,7 @@ function processImage() {
     const imageData = tempCtx.getImageData(0, 0, originalImage.width, originalImage.height);
 
     const k = parseInt(colorCountInput.value, 10);
-    const allPixels = getPixels(imageData);
-
-    // Optimization: Use a sample of pixels for k-means
-    const pixelSample = samplePixels(allPixels, 30000);
-
-    const initialK = Math.min(k * 5, 50); // Generate more colors initially
-    const kmeansResult = kmeans(pixelSample, initialK);
-    dominantColors = generateOptimalPalette(kmeansResult.centroids, kmeansResult.clusters, k);
     
-    displayPalette(dominantColors);
-
     // Get latest values from the UI
     const options = {
         colorThreshold: parseInt(colorThresholdInput.value, 10),
@@ -103,15 +118,12 @@ function processImage() {
         thinnessThreshold: parseInt(thinnessThresholdInput.value, 10)
     };
 
-    // New segmentation and PBN generation logic
-    const results = generatePbnImage(imageData, dominantColors, options);
-    pbnImageData = results.pbn;
-    coloredRegionsImageData = results.colored;
-
-    // The 'quantized' view will now show the result of the new segmentation
-    quantizedImageData = results.colored;
-
-    switchView(currentView);
+    // Post data to the worker to process off the main thread
+    imageProcessor.postMessage({
+        imageData: imageData,
+        options: options,
+        k: k
+    });
 }
 
 /**
